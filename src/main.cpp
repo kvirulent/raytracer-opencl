@@ -8,14 +8,21 @@ int main() {
     cl_int platform_result = clGetPlatformIDs(64, platforms, &platform_count);
 
     // Get the first device on the first platform
-    // maybe replace this with actually identifying a 
-    // proper device and throwing an error if unable to...
-    cl_device_id devices[1];
-    clGetDeviceIDs(platforms[0], CL_DEVICE_TYPE_GPU, 1, devices, nullptr);
-    cl_device_id device = devices[0];
-
+    cl_device_id device;
+    cl_device_id devices[64];
+    unsigned int device_qty;
+    clGetDeviceIDs(platforms[0], CL_DEVICE_TYPE_GPU, 64, devices, &device_qty);
+    for (int i = 0; i < device_qty; ++i) {
+        char device_name[256];
+        cl_int ok = clGetDeviceInfo(devices[i], CL_DEVICE_NAME, 256, device_name, nullptr);
+        if (ok == CL_SUCCESS && std::string(device_name) == TARGET_DEVICE_NAME) {
+            device = devices[i];
+            break;
+        }
+    }
+    
     // Create run context and command queue 
-    cl_context context = clCreateContext(nullptr, 1, & device, nullptr, nullptr, nullptr);
+    cl_context context = clCreateContext(nullptr, 1, &device, nullptr, nullptr, nullptr);
     cl_command_queue queue = clCreateCommandQueue(context, device, 0, nullptr);
 
     // Fetch & build kernel source
@@ -42,12 +49,12 @@ int main() {
     clEnqueueWriteBuffer(queue, ibf_veca, CL_TRUE, 0, 256 * sizeof(float), veca_data, 0, nullptr, nullptr);
     clEnqueueWriteBuffer(queue, ibf_vecb, CL_TRUE, 0, 256 * sizeof(float), vecb_data, 0, nullptr, nullptr);
 
-
     // Add buffers as kernel args so the kernel can access them
     clSetKernelArg(kernel, 0, sizeof(cl_mem), &ibf_veca);
     clSetKernelArg(kernel, 1, sizeof(cl_mem), &ibf_vecb);
     clSetKernelArg(kernel, 2, sizeof(cl_mem), &obf_vecc);
 
+    /* Run the kernel */
     // Use 256 cores in 64-core local blocks
     size_t global_work_size = 256;
     size_t local_work_size = 64;

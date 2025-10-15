@@ -51,7 +51,11 @@ target_include_directories(main_exec PRIVATE
 target_link_libraries(main_exec PRIVATE OpenCL::OpenCL)
 
 # === Compile definitions ===
-target_compile_definitions(main_exec PRIVATE CL_TARGET_OPENCL_VERSION=300 KERNELS_DIR=\"${OUTPUT_DIR}/kernels\")
+target_compile_definitions(main_exec PRIVATE 
+    CL_TARGET_OPENCL_VERSION=300 
+    KERNELS_DIR=\"${OUTPUT_DIR}/kernels\"
+    TARGET_DEVICE_NAME=\"gfx1102\"
+)
 
 # === Copy kernels to output ===
 file(GLOB_RECURSE KERNEL_FILES CONFIGURE_DEPENDS
