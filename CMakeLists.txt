@@ -45,6 +45,9 @@ add_executable(main_exec ${SRC_FILES})
 # === Include directories ===
 target_include_directories(main_exec PRIVATE
     ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/scene
+    ${CMAKE_SOURCE_DIR}/src/types
+    ${CMAKE_SOURCE_DIR}/src/kernels
 )
 
 # === Link with OpenCL ===

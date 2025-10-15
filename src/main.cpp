@@ -1,6 +1,10 @@
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "../include/stb_image_write.h"
+
 #include "main.h"
 
 int main() {
+    std::cout << "hello" << std::endl;
     /* Setup & Configure OpenCL */
     // Identify availible platforms (compute devices)
     cl_platform_id platforms[64];
@@ -16,6 +20,7 @@ int main() {
         char device_name[256];
         cl_int ok = clGetDeviceInfo(devices[i], CL_DEVICE_NAME, 256, device_name, nullptr);
         if (ok == CL_SUCCESS && std::string(device_name) == TARGET_DEVICE_NAME) {
+            std::cout << "Using device " << device_name << std::endl;
             device = devices[i];
             break;
         }
@@ -26,60 +31,62 @@ int main() {
     cl_command_queue queue = clCreateCommandQueue(context, device, 0, nullptr);
 
     // Fetch & build kernel source
-    std::string kernel_src_str = fetch_src("vecsum");
+    std::string kernel_src_str = fetch_src("gradient");
     const char* kernel_src = kernel_src_str.c_str(); // convert to c-style
     cl_program program = clCreateProgramWithSource(context, 1, &kernel_src, 0, nullptr);
     clBuildProgram(program, 1, &device, nullptr, nullptr, nullptr);
-    cl_kernel kernel = clCreateKernel(program, "vecsum", nullptr);
+    cl_kernel kernel = clCreateKernel(program, "gradient", nullptr);
+    std::cout << "Compiled kernel" << std::endl;
 
-    /* Setup input & output buffers */
-    // Create random data to give to vecsum
-    float veca_data[256];
-    float vecb_data[256];
+    const int WIDTH = 2048;
+    const int HEIGHT = 1536;
+    const size_t px = static_cast<size_t>(WIDTH) * HEIGHT;
 
-    for (int i = 0; i < 256; ++i) {
-        veca_data[i] = (float)(i * i);
-        vecb_data[i] = (float)i;
-    }
+    cl_mem ibf_dim_x = clCreateBuffer(context, CL_MEM_READ_ONLY, 1 * sizeof(int), nullptr, nullptr);
+    cl_mem ibf_dim_y = clCreateBuffer(context, CL_MEM_READ_ONLY, 1 * sizeof(int), nullptr, nullptr);
+    cl_mem obf_frame = clCreateBuffer(context, CL_MEM_WRITE_ONLY, (WIDTH * HEIGHT) * sizeof(cl_float3), nullptr, nullptr);
+    clEnqueueWriteBuffer(queue, ibf_dim_x, CL_TRUE, 0, 1 * sizeof(int), &WIDTH, 0, nullptr, nullptr);
+    clEnqueueWriteBuffer(queue, ibf_dim_y, CL_TRUE, 0, 1 * sizeof(int), &HEIGHT, 0, nullptr, nullptr);
+    std::cout << "Enqueued buffer writes" << std::endl;
 
-    // Create I/O buffers and enqueue writes
-    cl_mem ibf_veca = clCreateBuffer(context, CL_MEM_READ_ONLY, 256 * sizeof(float), nullptr, nullptr); // in buffer
-    cl_mem ibf_vecb = clCreateBuffer(context, CL_MEM_READ_ONLY, 256 * sizeof(float), nullptr, nullptr); // in buffer
-    cl_mem obf_vecc = clCreateBuffer(context, CL_MEM_WRITE_ONLY, 256 * sizeof(float), nullptr, nullptr); // out buffer
-    clEnqueueWriteBuffer(queue, ibf_veca, CL_TRUE, 0, 256 * sizeof(float), veca_data, 0, nullptr, nullptr);
-    clEnqueueWriteBuffer(queue, ibf_vecb, CL_TRUE, 0, 256 * sizeof(float), vecb_data, 0, nullptr, nullptr);
+    clSetKernelArg(kernel, 0, sizeof(cl_mem), &ibf_dim_x);
+    clSetKernelArg(kernel, 1, sizeof(cl_mem), &ibf_dim_y);
+    clSetKernelArg(kernel, 2, sizeof(cl_mem), &obf_frame);
+    std::cout << "Added buffers to kernel args" << std::endl;
 
-    // Add buffers as kernel args so the kernel can access them
-    clSetKernelArg(kernel, 0, sizeof(cl_mem), &ibf_veca);
-    clSetKernelArg(kernel, 1, sizeof(cl_mem), &ibf_vecb);
-    clSetKernelArg(kernel, 2, sizeof(cl_mem), &obf_vecc);
+    size_t global_work_size[2] = { WIDTH, HEIGHT };
+    clEnqueueNDRangeKernel(queue, kernel, 2, nullptr, global_work_size, nullptr, 0, nullptr, nullptr);
+    std::cout << "Enqueued kernel" << std::endl;
 
-    /* Run the kernel */
-    // Use 256 cores in 64-core local blocks
-    size_t global_work_size = 256;
-    size_t local_work_size = 64;
-    clEnqueueNDRangeKernel(queue, kernel, 1, 0, &global_work_size, &local_work_size, 0, nullptr, nullptr);
-
-    // Enqueue output buffer read
-    float vecc_data[256];
-    clEnqueueReadBuffer(queue, obf_vecc, CL_TRUE, 0, 256 * sizeof (float), vecc_data, 0, nullptr, nullptr);
+    std::vector<cl_float3> framebuf(px);
+    clEnqueueReadBuffer(queue, obf_frame, CL_TRUE, 0, (WIDTH * HEIGHT) * sizeof (cl_float3), framebuf.data(), 0, nullptr, nullptr);
+    std::cout << "Enqueued obf framebuf read" << std::endl;
 
     // Yield until queue is finished
     clFinish(queue);
+    std::cout << "clFinish-ed" << std::endl;
 
-    // Print vecsum output buffer
-    std::cout << "Result:\n";
-    for (int i = 0; i < 256; ++i) {
-        std::cout << vecc_data[i] << std::endl;
+    std::vector<unsigned char> bytes;
+    for (size_t i = 0; i < HEIGHT * WIDTH; i++) {
+        cl_float3 &c = framebuf.at(i);
+        Vec3f t(c.s[0], c.s[1], c.s[2]); // convert to vec3f for easy math
+        float max = std::max(t[0], std::max(t[1], t[2]));
+        for (size_t j = 0; j < 3; j++) {
+            bytes.push_back((char)(255 * std::max(0.f, std::min(1.f, t[j]))));
+        }
     }
 
     // Release all objects
-    clReleaseMemObject(ibf_veca);
-    clReleaseMemObject(ibf_vecb);
-    clReleaseMemObject(obf_vecc);
+    clReleaseMemObject(ibf_dim_x);
+    clReleaseMemObject(ibf_dim_y);
+    clReleaseMemObject(obf_frame);
     clReleaseKernel(kernel);
     clReleaseProgram(program);
     clReleaseCommandQueue(queue);
     clReleaseContext(context);
     clReleaseDevice(device);
+
+    int r = stbi_write_png("./out.png", WIDTH, HEIGHT, 3, bytes.data(), WIDTH * 3);
+    std::cout << "Image write returned " << r << std::endl;
+    return r;
 }
