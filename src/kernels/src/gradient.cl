@@ -1,3 +1,6 @@
+// gradient.cl
+// mango gradient
+
 __kernel void gradient(__constant int* width, __constant int* height, __global float3* output) {
     int x = get_global_id(0);
     int y = get_global_id(1);

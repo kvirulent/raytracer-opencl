@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "kernels/fetch.h"
-#include "types/vector.h"
+
+#define M_PI 3.14159265358979323846
 
 #endif // MAIN_H

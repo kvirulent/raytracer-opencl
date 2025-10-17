@@ -31,34 +31,59 @@ int main() {
     cl_command_queue queue = clCreateCommandQueue(context, device, 0, nullptr);
 
     // Fetch & build kernel source
-    std::string kernel_src_str = fetch_src("gradient");
+    std::string kernel_src_str = fetch_src("intersect_rs");
     const char* kernel_src = kernel_src_str.c_str(); // convert to c-style
     cl_program program = clCreateProgramWithSource(context, 1, &kernel_src, 0, nullptr);
     clBuildProgram(program, 1, &device, nullptr, nullptr, nullptr);
-    cl_kernel kernel = clCreateKernel(program, "gradient", nullptr);
+    cl_kernel kernel = clCreateKernel(program, "intersect_rs", nullptr);
     std::cout << "Compiled kernel" << std::endl;
 
     const int WIDTH = 2048;
     const int HEIGHT = 1536;
     const size_t px = static_cast<size_t>(WIDTH) * HEIGHT;
+    const float fov = M_PI/2.f;
 
+    cl_float3 sphere_origin = {2, 0, -13};
+    cl_float sphere_radius = 2;
+
+    // viewport dimensions
     cl_mem ibf_dim_x = clCreateBuffer(context, CL_MEM_READ_ONLY, 1 * sizeof(int), nullptr, nullptr);
     cl_mem ibf_dim_y = clCreateBuffer(context, CL_MEM_READ_ONLY, 1 * sizeof(int), nullptr, nullptr);
+
+    // scene object
+    cl_mem ibf_sphere_origin = clCreateBuffer(context, CL_MEM_READ_ONLY, 1 * sizeof(cl_float3), nullptr, nullptr);
+    cl_mem ibf_sphere_radius = clCreateBuffer(context, CL_MEM_READ_ONLY, 1 * sizeof(cl_float), nullptr, nullptr);
+
+    // camera fov
+    cl_mem ibf_fov = clCreateBuffer(context, CL_MEM_READ_ONLY, 1 * sizeof(float), nullptr, nullptr);
+
+    // output framebuffer
     cl_mem obf_frame = clCreateBuffer(context, CL_MEM_WRITE_ONLY, (WIDTH * HEIGHT) * sizeof(cl_float3), nullptr, nullptr);
+
+    // queue writes
     clEnqueueWriteBuffer(queue, ibf_dim_x, CL_TRUE, 0, 1 * sizeof(int), &WIDTH, 0, nullptr, nullptr);
     clEnqueueWriteBuffer(queue, ibf_dim_y, CL_TRUE, 0, 1 * sizeof(int), &HEIGHT, 0, nullptr, nullptr);
+    clEnqueueWriteBuffer(queue, ibf_sphere_origin, CL_TRUE, 0, 1 * sizeof(cl_float3), &sphere_origin, 0, nullptr, nullptr);
+    clEnqueueWriteBuffer(queue, ibf_sphere_radius, CL_TRUE, 0, 1 * sizeof(cl_float), &sphere_radius, 0, nullptr, nullptr);
+    clEnqueueWriteBuffer(queue, ibf_fov, CL_TRUE, 0, 1 * sizeof(float), &fov, 0, nullptr, nullptr);
     std::cout << "Enqueued buffer writes" << std::endl;
 
+    // add buffers to kernel
     clSetKernelArg(kernel, 0, sizeof(cl_mem), &ibf_dim_x);
     clSetKernelArg(kernel, 1, sizeof(cl_mem), &ibf_dim_y);
-    clSetKernelArg(kernel, 2, sizeof(cl_mem), &obf_frame);
+    clSetKernelArg(kernel, 2, sizeof(cl_mem), &ibf_fov);
+    clSetKernelArg(kernel, 3, sizeof(cl_mem), &ibf_sphere_origin);
+    clSetKernelArg(kernel, 4, sizeof(cl_mem), &ibf_sphere_radius);
+    clSetKernelArg(kernel, 5, sizeof(cl_mem), &obf_frame);
     std::cout << "Added buffers to kernel args" << std::endl;
 
+    // queue kernel
     size_t global_work_size[2] = { WIDTH, HEIGHT };
     clEnqueueNDRangeKernel(queue, kernel, 2, nullptr, global_work_size, nullptr, 0, nullptr, nullptr);
     std::cout << "Enqueued kernel" << std::endl;
 
-    std::vector<cl_float3> framebuf(px);
+    // queue read output 
+    std::vector<cl_float3> framebuf(px); // should define this as an array but its too fat (> max-value-size)
     clEnqueueReadBuffer(queue, obf_frame, CL_TRUE, 0, (WIDTH * HEIGHT) * sizeof (cl_float3), framebuf.data(), 0, nullptr, nullptr);
     std::cout << "Enqueued obf framebuf read" << std::endl;
 
@@ -66,14 +91,14 @@ int main() {
     clFinish(queue);
     std::cout << "clFinish-ed" << std::endl;
 
+    // convert for stb
     std::vector<unsigned char> bytes;
-    for (size_t i = 0; i < HEIGHT * WIDTH; i++) {
+    for (size_t i = 0; i < framebuf.size(); i++) {
         cl_float3 &c = framebuf.at(i);
-        Vec3f t(c.s[0], c.s[1], c.s[2]); // convert to vec3f for easy math
-        float max = std::max(t[0], std::max(t[1], t[2]));
-        for (size_t j = 0; j < 3; j++) {
-            bytes.push_back((char)(255 * std::max(0.f, std::min(1.f, t[j]))));
-        }
+        float max = std::max(c.s[0], std::max(c.s[1], c.s[2]));
+        bytes.push_back((char)(255 * std::max(0.f, std::min(1.f, c.s[0]))));
+        bytes.push_back((char)(255 * std::max(0.f, std::min(1.f, c.s[1]))));
+        bytes.push_back((char)(255 * std::max(0.f, std::min(1.f, c.s[2]))));
     }
 
     // Release all objects
@@ -86,6 +111,7 @@ int main() {
     clReleaseContext(context);
     clReleaseDevice(device);
 
+    // write to png
     int r = stbi_write_png("./out.png", WIDTH, HEIGHT, 3, bytes.data(), WIDTH * 3);
     std::cout << "Image write returned " << r << std::endl;
     return r;

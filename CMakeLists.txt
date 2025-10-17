@@ -65,15 +65,16 @@ file(GLOB_RECURSE KERNEL_FILES CONFIGURE_DEPENDS
     ${CMAKE_SOURCE_DIR}/src/kernels/*.cl
 )
 
-if (KERNEL_FILES)
-    add_custom_command(TARGET main_exec POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${OUTPUT_DIR}/kernels
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${KERNEL_FILES}
-            ${OUTPUT_DIR}/kernels
-        COMMENT "Copying OpenCL kernel files to ${OUTPUT_DIR}/kernels"
-    )
-endif()
+add_custom_target(DeployKernelArtifacts
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${OUTPUT_DIR}/kernels
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${KERNEL_FILES}
+        ${OUTPUT_DIR}/kernels
+    DEPENDS ${KERNEL_FILES}
+    COMMENT "Deploying OpenCL kernel artifacts to ${OUTPUT_DIR}/kernels"
+)
+
+add_dependencies(main_exec DeployKernelArtifacts)
 
 # === Summary ===
 message(STATUS "----------------------------------------------")
